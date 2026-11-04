@@ -1,25 +1,26 @@
-# PANDUAN LENGKAP KODE R & PERSIAPAN BIMBINGAN SKRIPSI
+# PANDUAN LENGKAP KODE R & PERSIAPAN BIMBINGAN SKRIPSI (UJI SAMPEL INDEPENDEN)
 
 **Judul Penelitian:** ANALISIS KOMPARATIF PERFORMA DIRECT STATE UPDATE MVI DAN REDUCER-BASED MVI PADA APLIKASI ANDROID BERBASIS JETPACK COMPOSE  
 **Peneliti:** Audy Fitrah Habibie (NIM: 235150400111018)  
+**Branch Git:** `independent-test` (Desain Dua Sampel Independen / Tidak Berpasangan)  
 **Tujuan Dokumen:** 
 1. Menjelaskan logika kode R (`Analisis.R` dan `Uji_Hipotesis.R`) secara bertahap dan mudah dipahami bagi pemula.
-2. Mempersiapkan Anda menghadapi pertanyaan kritis dari dosen pembimbing/penguji saat sesi bimbingan.
+2. Mempersiapkan Anda menghadapi pertanyaan kritis dari dosen pembimbing/penguji saat sesi bimbingan dan sidang.
 
 ---
 
 ## DAFTAR ISI
-1. [Alur Kerja Analisis Data Skripsi](#1-alur-kerja-analisis-data-skripsi)
-2. [Bedah Kode: `Analisis.R` (Ekstraksi & Normalitas)](#2-bedah-kode-analisisr-ekstraksi--normalitas)
-3. [Bedah Kode: `Uji_Hipotesis.R` (Inferensial & Visualisasi)](#3-bedah-kode-uji_hipotesisr-inferensial--visualisasi)
+1. [Alur Kerja Analisis Data Skripsi (Desain Independen)](#1-alur-kerja-analisis-data-skripsi-desain-independen)
+2. [Bedah Kode: `Analisis.R` (Ekstraksi, Normalitas, & Homogenitas Varians)](#2-bedah-kode-analisisr-ekstraksi-normalitas--homogenitas-varians)
+3. [Bedah Kode: `Uji_Hipotesis.R` (Independent t-Test, Mann-Whitney U, & Visualisasi)](#3-bedah-kode-uji_hipotesisr-independent-t-test-mann-whitney-u--visualisasi)
 4. [Struktur Output Data untuk Bab IV](#4-struktur-output-data-untuk-bab-iv)
 5. [Bank Pertanyaan & Jawaban Bimbingan Dosen (FAQ Skripsi)](#5-bank-pertanyaan--jawaban-bimbingan-dosen-faq-skripsi)
 
 ---
 
-## 1. ALUR KERJA ANALISIS DATA SKRIPSI
+## 1. ALUR KERJA ANALISIS DATA SKRIPSI (DESAIN INDEPENDEN)
 
-Proses analisis dibagi menjadi dua tahap yang saling terhubung:
+Sesuai Bab 3.2 dan Gambar 3.1 proposal Anda, pengambilan data dilakukan pada **dua aplikasi terpisah secara sekuensial** (30 iterasi *Direct MVI* selesai terlebih dahulu, kemudian dilanjutkan 30 iterasi *Reducer MVI*). Oleh karena itu, perbandingan dilakukan sebagai **Dua Kelompok Pengukuran Independen ($N_1 = 30, N_2 = 30$)**.
 
 ```
 [Raw Data: 4 Berkas JSON di /data]
@@ -28,231 +29,173 @@ Proses analisis dibagi menjadi dua tahap yang saling terhubung:
 [Analisis.R]
   ├─ 1. Membaca JSON & Mengekstrak Metrik (CPU, T_logic, T_frame, Responsivitas)
   ├─ 2. Menyimpan Dataset Bersih -> output/clean_metrics.csv
-  ├─ 3. Menghitung Statistik Deskriptif (Mean, SD, Median, Min, Max)
-  ├─ 4. Menjalankan Uji Normalitas Shapiro-Wilk (Kelompok & Selisih Berpasangan)
-  └─ 5. Menggambar Q-Q Plot Diagnostik -> output/figures/
+  ├─ 3. Menghitung Statistik Deskriptif (Mean, SD, Varians, Median, Min, Max)
+  ├─ 4. Uji Prasyarat 1: Uji Normalitas Shapiro-Wilk per Kelompok Mandiri
+  ├─ 5. Uji Prasyarat 2: Uji Homogenitas Varians (F-Test & Levene's Test)
+  └─ 6. Menggambar Q-Q Plot Diagnostik -> output/figures/
   ▼
 [Uji_Hipotesis.R]
   ├─ 1. Memuat clean_metrics.csv
-  ├─ 2. Menjalankan Uji Hipotesis H1 (Responsivitas) via Paired Sample t-Test
-  ├─ 3. Menjalankan Uji Hipotesis H2 (CPU):
-  │      ├─ Marketplace: Paired Sample t-Test (karena normal)
-  │      └─ Sosial Media: Wilcoxon Signed-Rank Test (karena tidak normal)
-  ├─ 4. Menghitung Effect Size (Cohen's d & Wilcoxon r) dan Selisih Relatif (%)
-  ├─ 5. Melakukan Dekomposisi Waktu (T_logic vs T_frame)
-  └─ 6. Membuat Grafik Siap Publikasi Bab IV -> output/figures/
+  ├─ 2. Skenario Marketplace (Kedua Kelompok Normal & Varians Homogen):
+  │      └─ Diuji dengan Independent Sample t-Test (Equal Variance, df = 58)
+  │         + Pooled Cohen's d
+  ├─ 3. Skenario Sosial Media (Kelompok Tidak Normal):
+  │      └─ Diuji dengan Mann-Whitney U Test (Wilcoxon Rank-Sum)
+  │         + Effect Size r & Rank-Biserial Correlation (r_rb)
+  ├─ 4. Melakukan Dekomposisi Waktu (T_logic vs T_frame)
+  └─ 5. Membuat Grafik Siap Publikasi Bab IV -> output/figures/
 ```
 
 ---
 
-## 2. BEDAH KODE: `Analisis.R` (EKSTRAKSI & NORMALITAS)
+## 2. BEDAH KODE: `Analisis.R` (EKSTRAKSI, NORMALITAS, & HOMOGENITAS VARIANS)
 
-Berkas ini bertugas mengubah data mentah JSON hasil AndroidX Macrobenchmark menjadi angka-angka yang siap diuji statistik.
-
-### A. Bagian Pustaka (Library)
-```r
-suppressPackageStartupMessages({
-  library(jsonlite)  # Alat untuk membaca file JSON
-  library(dplyr)     # Alat untuk memanipulasi, menyaring, dan mengelompokkan tabel data
-  library(ggplot2)   # Alat untuk menggambar grafik dan visualisasi statistik
-})
-```
-* **`jsonlite`**: Format data Macrobenchmark bawaan Android Studio berupa teks `.json`. Library ini mengubah teks hierarki tersebut menjadi struktur data R.
-* **`dplyr`**: Menggunakan sintaks modern R seperti tanda pipa `%>%` (artinya *"lalu lakukan..."*).
-* **`ggplot2`**: Standar emas pembuatan grafik akademik di R.
+### A. Fungsi Ekstraksi: `extract_macrobenchmark_data()`
+* Membaca berkas JSON Macrobenchmark menggunakan `jsonlite::fromJSON()`.
+* **`cpu_usage`**: Mengambil 30 nilai `cpuUsagePercent$runs`.
+* **`t_logic_avg`**: Menghitung rata-rata durasi pemrosesan intent di ViewModel per interaksi (`ProcessIntentSumMs / ProcessIntentCount`).
+* **`t_frame_p50` & `t_frame_p95`**: Dalam 1 iterasi pengujian, layar merender ~1.370 frame. Fungsi `quantile(f_vals, probs = 0.50)` dan `0.95` mereduksi ~1.370 frame tersebut menjadi 1 angka representatif $P_{50}$ (kondisi tipikal) dan $P_{95}$ (kondisi beban tinggi) untuk iterasi ke-$i$.
+* **`responsiveness_p50` & `responsiveness_p95`**: Sesuai Persamaan 2.1 Proposal, dihitung dari $T_{\text{logic}} + T_{\text{frame}}$.
 
 ---
 
-### B. Fungsi Ekstraksi: `extract_macrobenchmark_data()`
-Fungsi ini dipanggil 4 kali untuk masing-masing berkas JSON.
-
+### B. Uji Prasyarat 1: Uji Normalitas Shapiro-Wilk per Kelompok Mandiri
 ```r
-raw_data <- fromJSON(file_path, simplifyVector = FALSE)
-bm <- raw_data$benchmarks[[1]]
-metrics <- bm$metrics
-sampled <- bm$sampledMetrics
+sw_d <- shapiro.test(v_direct)
+sw_r <- shapiro.test(v_reducer)
+both_normal <- (sw_d$p.value >= 0.05) && (sw_r$p.value >= 0.05)
 ```
-* Macrobenchmark menyimpan data dalam objek `benchmarks`.
-* Di dalamnya terdapat `metrics` (metrik teragregasi per iterasi) dan `sampledMetrics` (data durasi tiap frame tampilan yang jumlahnya ribuan).
-
-#### Mengapa $T_{logic}$ Dihitung sebagai `ProcessIntentSumMs / ProcessIntentCount`?
-```r
-intent_sum_runs <- unlist(metrics[[sum_key]]$runs)
-intent_cnt_runs <- unlist(metrics[[cnt_key]]$runs)
-t_logic_avg <- intent_sum_runs / intent_cnt_runs
-```
-* Di dalam Macrobenchmark, setiap tombol diklik atau di-*scroll*, ViewModel memproses sebuah **Intent**.
-* `ProcessIntentSumMs` adalah total waktu (ms) yang dihabiskan untuk memproses seluruh intent dalam 1 sesi pengujian (sekitar 40-60 intent).
-* `ProcessIntentCount` adalah total banyaknya intent yang diproses.
-* Dengan membaginya, kita mendapatkan **durasi rata-rata per 1 kali pemrosesan intent** (sekitar $0,13 - 0,14$ milidetik).
-
-#### Dari Mana $T_{frame}$ Diperoleh?
-```r
-for (i in seq_len(n_runs)) {
-  f_vals <- as.numeric(frame_runs[[i]])
-  t_frame_p50[i] <- as.numeric(quantile(f_vals, probs = 0.50, names = FALSE))
-  t_frame_p95[i] <- as.numeric(quantile(f_vals, probs = 0.95, names = FALSE))
-}
-```
-* Dalam 1 kali run (misal selama scrolling/interaksi), layar Android merender sekitar $1.300 - 1.400$ frame grafis Jetpack Compose.
-* `quantile(..., probs = 0.50)` mengambil nilai **median ($P_{50}$)**, yaitu durasi frame yang mewakili **kondisi tipikal/normal** aplikasi.
-* `quantile(..., probs = 0.95)` mengambil nilai **persentil ke-95 ($P_{95}$)**, yaitu kondisi saat beban rendering sedang berat (frame-frame yang lambat).
-
-#### Menghitung Responsivitas Total Sesuai Persamaan 2.1 di Proposal:
-```r
-# Responsivitas = T_logic + T_frame
-responsiveness_p50 <- t_logic_avg + t_frame_p50
-responsiveness_p95 <- t_logic_avg + t_frame_p95
-```
-* Waktu total respons pengguna adalah gabungan sejak logika di ViewModel selesai diproses ($T_{logic}$) ditambah waktu antarmuka Compose menggambar perubahan ke layar ($T_{frame}$).
+* Karena kedua kelompok (*Direct MVI* dan *Reducer MVI*) bersifat **independen**, uji normalitas dilakukan langsung pada masing-masing kelompok ($N=30$ untuk Direct, dan $N=30$ untuk Reducer).
+* **Syarat lolos ke uji parametrik (*Independent t-Test*)**: **Kedua kelompok** harus sama-sama berdistribusi normal ($p \ge 0,05$).
+* **Hasil pada Data Anda**:
+  * **Marketplace**: Kelompok Direct ($p > 0,36$) dan Kelompok Reducer ($p > 0,20$) **keduanya Normal** pada seluruh metrik!
+  * **Sosial Media**: Kelompok Direct ($p < 0,01$) dan Kelompok Reducer ($p < 0,02$) **keduanya Tidak Normal** pada seluruh metrik!
 
 ---
 
-### C. Uji Normalitas Shapiro-Wilk
+### C. Uji Prasyarat 2: Uji Homogenitas Varians (Kesamaan Varians)
+Selain normalitas, **Student's Independent Sample t-Test** mensyaratkan bahwa varians kedua kelompok adalah **sama/homogen** ($\sigma_1^2 = \sigma_2^2$). Di dalam `Analisis.R`, kita mengujinya dengan dua metode sekaligus:
+
 ```r
-# Uji pada selisih berpasangan
-diff_vals <- d_df[[m]] - r_df[[m]]
-st <- shapiro.test(diff_vals)
+# 1. F-Test for Equality of Two Variances (Bawaan Base R)
+ft <- var.test(v_direct, v_reducer)
+
+# 2. Levene's Test (Brown-Forsythe Median-Centered)
+lt <- levene_test_median(v_direct, v_reducer)
 ```
-* `shapiro.test()` menghasilkan dua hal:
-  1. **Statistik $W$**: Mengukur kemiripan data dengan kurva normal teoretis (semakin mendekati 1.0, data semakin sempurna normalnya).
-  2. **$p$-value**: Peluang data menyimpang dari kurva normal.
-* Logika keputusan:
-  ```r
-  ifelse(st$p.value >= 0.05, "Paired Sample t-Test", "Wilcoxon Signed-Rank Test")
-  ```
-  Jika $p \ge 0,05$ artinya data selisih aman (normal), maka kita berhak menggunakan **Paired t-Test**. Jika $p < 0,05$, data tidak normal sehingga harus dialihkan ke **Wilcoxon**.
+* **Hipotesis Homogenitas Varians**:
+  * $H_0$: Varians kedua kelompok sama/homogen ($\sigma_{\text{Direct}}^2 = \sigma_{\text{Reducer}}^2$).
+  * $H_1$: Varians kedua kelompok berbeda ($\sigma_{\text{Direct}}^2 \ne \sigma_{\text{Reducer}}^2$).
+* **Kriteria Keputusan ($\alpha = 0,05$)**:
+  * Jika **$p\text{-value} \ge 0,05$** $\rightarrow$ Gagal tolak $H_0$ $\rightarrow$ **Varians Homogen (Sama)**.
+* **Hasil pada Data Anda**:
+  * Seluruh metrik pada Marketplace dan Sosial Media menghasilkan **$p > 0,05$** (baik pada F-Test maupun Levene's Test), sehingga **100% varians kedua kelompok adalah homogen/sama**!
 
 ---
 
-## 3. BEDAH KODE: `Uji_Hipotesis.R` (INFERENSIAL & VISUALISASI)
+## 3. BEDAH KODE: `Uji_Hipotesis.R` (INDEPENDENT T-TEST, MANN-WHITNEY U, & VISUALISASI)
 
-Berkas ini menguji apakah perbedaan antara Direct MVI dan Reducer MVI itu **nyata (signifikan secara statistik)** atau hanya kebetulan/noise.
-
-### A. Uji Paired Sample t-Test: `run_paired_ttest()`
+### A. Uji Parametrik: `run_independent_ttest()` (Untuk Skenario Marketplace)
 ```r
-t_res <- t.test(direct_vec, reducer_vec, paired = TRUE)
+t_res <- t.test(direct_vec, reducer_vec, paired = FALSE, var.equal = TRUE)
 ```
-* `paired = TRUE` adalah parameter kunci: ini memberitahu R bahwa data baris ke-1 Direct berpasangan dengan baris ke-1 Reducer (karena diambil pada iterasi benchmark yang sama pada perangkat yang sama).
-* `t_res$statistic`: Nilai statistik $t$.
-* `t_res$p.value`: Nilai signifikansi. Jika $p < 0,05$, perbedaan kedua arsitektur terbukti nyata.
+* **`paired = FALSE`**: Menandakan kedua kelompok berasal dari pengukuran aplikasi yang terpisah/independen.
+* **`var.equal = TRUE`**: Menggunakan rumus *Student's t-Test* dengan varians gabungan (*pooled variance*) karena syarat homogenitas varians telah terbukti terpenuhi ($p > 0,05$).
+* **Derajat Kebebasan ($df$)**: $df = n_1 + n_2 - 2 = 30 + 30 - 2 = \mathbf{58}$.
 
-#### Menghitung Ukuran Efek (Cohen's $d_z$):
+#### Perhitungan Pooled Cohen's $d$ (Effect Size Independen):
 ```r
-cohens_d <- mean_diff / sd_diff
+s_pooled <- sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
+cohens_d <- (mean_direct - mean_reducer) / s_pooled
 ```
-* Nilai $p$ hanya memberi tahu *apakah ada perbedaan*.
-* Cohen's $d$ memberi tahu ***seberapa besar perbedaan tersebut di dunia nyata***:
-  * $|d| < 0,2$ = Negligible (perbedaan sangat kecil/bisa diabaikan)
-  * $0,2 \le |d| < 0,5$ = Small (kecil)
-  * $0,5 \le |d| < 0,8$ = Medium (sedang)
-  * $|d| \ge 0,8$ = **Large (besar / berdampak nyata)**
+* Mengukur besar perbedaan rata-rata dibagi standar deviasi gabungan kedua kelompok.
+* Kriteria Cohen (1988): $|d| < 0,2$ (*Negligible*), $0,2 - 0,5$ (*Small*), $0,5 - 0,8$ (*Medium*), $\ge 0,8$ (*Large*).
 
 ---
 
-### B. Uji Wilcoxon Signed-Rank Test: `run_wilcoxon_test()`
-Digunakan khusus untuk **Penggunaan CPU pada Sosial Media** karena data selisihnya melanggar asumsi normalitas ($p = 0,0045$).
-
+### B. Uji Non-Parametrik: `run_mann_whitney_test()` (Untuk Skenario Sosial Media)
 ```r
-w_res <- wilcox.test(direct_vec, reducer_vec, paired = TRUE, exact = FALSE, correct = TRUE)
+mw_res <- wilcox.test(direct_vec, reducer_vec, paired = FALSE, exact = FALSE, correct = TRUE)
 ```
-* Mengubah selisih data menjadi peringkat (*rank*), sehingga kebal terhadap nilai ekstrem (*outlier*).
-* Menghitung nilai uji $V$ dan menghitung pendekatan nilai $Z$ untuk memperoleh effect size non-parametrik:
-  $$r = \frac{|Z|}{\sqrt{N}}$$
-
----
-
-### C. Dekomposisi Waktu: Mengapa Sangat Kritis?
-Di dalam `Uji_Hipotesis.R`, kita tidak hanya menguji total responsivitas, tetapi juga menguji masing-masing komponen pembentuknya:
-1. Uji t-Test pada $T_{logic}$
-2. Uji t-Test pada $T_{frame}$
-
-**Hasil temuan:**
-Pada Marketplace, selisih $T_{logic}$ **tidak signifikan** ($p = 0,3209$), sedangkan $T_{frame}$ **sangat signifikan** ($p < 0,001$). Artinya, waktu CPU di ViewModel untuk memproses intent hampir sama cepatnya, tetapi Reducer menyebabkan beban rekomposisi/rendering antarmuka Compose menjadi lebih berat! Ini adalah temuan analisis bernilai tinggi untuk Bab V skripsi Anda.
+* Di dalam bahasa R, fungsi `wilcox.test(..., paired = FALSE)` adalah nama fungsi untuk menjalankan **Mann-Whitney U Test** (disebut juga *Wilcoxon Rank-Sum Test*).
+* Menggabungkan $30 + 30 = 60$ data dari kedua kelompok, mengurutkannya dari terkecil ke terbesar, lalu membandingkan jumlah peringkat (*rank sum*) antara Direct MVI dan Reducer MVI.
+* **Effect Size Non-Parametrik**:
+  1. **Mann-Whitney $r$**: $r = \frac{|Z|}{\sqrt{N_{\text{total}}}}$ (dengan $N_{\text{total}} = 60$).
+  2. **Rank-Biserial Correlation ($r_{rb}$)**: $r_{rb} = \frac{2U}{n_1 n_2} - 1$.
 
 ---
 
 ## 4. STRUKTUR OUTPUT DATA UNTUK BAB IV
 
-Semua data telah diekspor ke folder [`output/`](file:///C:/Users/AUDYFH/Skripsi/output/):
+Semua tabel hasil berada di folder [`output/`](file:///C:/Users/AUDYFH/Skripsi/output/):
 
-| Nama Berkas | Isi / Kegunaan di Skripsi |
+| Nama Berkas | Kegunaan di Naskah Skripsi Bab IV |
 | :--- | :--- |
-| `clean_metrics.csv` | Tabel data mentah yang rapi per iterasi (Iterasi 1 s.d. 30). Bisa dilampirkan di **Lampiran Skripsi**. |
-| `descriptive_statistics.csv` | Nilai Mean, SD, Median, Min, Max, P95. Langsung disalin ke **Tabel Statistik Deskriptif Bab IV**. |
-| `shapiro_wilk_paired_diffs.csv` | Nilai statistik $W$ dan $p$-value normalitas. Disalin ke **Tabel Uji Prasyarat Analisis Bab IV**. |
-| `hypothesis_test_results.csv` | Nilai $t$, $df$, $p$-value, Cohen's $d$, dan kesimpulan. Disalin ke **Tabel Hasil Uji Hipotesis Bab IV**. |
-| `output/figures/*.png` | Grafik batang 95% CI dan Boxplot resolusi tinggi (300 DPI) untuk **Gambar pada Bab IV**. |
+| `clean_metrics.csv` | Data bersih 120 baris ($30 \times 4$ skenario) untuk **Lampiran Skripsi**. |
+| `descriptive_statistics.csv` | Nilai Mean, SD, Varians, Median, Min, Max, P95 untuk **Tabel Statistik Deskriptif Bab IV**. |
+| `shapiro_wilk_groups.csv` | Detail hasil uji normalitas per kelompok mandiri ($N = 30$). |
+| `prerequisite_tests.csv` | **Tabel Ringkasan Uji Prasyarat Bab IV** (berisi Uji Normalitas Shapiro-Wilk + Uji Homogenitas Varians F-test & Levene + Keputusan Alat Uji). |
+| `hypothesis_test_results.csv` | **Tabel Hasil Uji Hipotesis Utama Bab IV** (berisi nilai $t(58)$ atau $U$, $p$-value, 95% CI, Pooled Cohen's $d$ / Mann-Whitney $r$, dan kesimpulan hipotesis). |
 
 ---
 
 ## 5. BANK PERTANYAAN & JAWABAN BIMBINGAN DOSEN (FAQ SKRIPSI)
 
-Berikut adalah pertanyaan-pertanyaan yang paling sering dilontarkan oleh dosen pembimbing atau penguji beserta panduan cara menjawabnya:
+Berikut adalah daftar pertanyaan yang paling sering ditanyakan dosen pembimbing/penguji beserta jawaban yang tepat:
 
 ---
 
-### Q1: "Kenapa kamu menggunakan uji Shapiro-Wilk untuk uji normalitas, bukan Kolmogorov-Smirnov?"
+### Q1: "Bagaimana cara kamu mengambil data, dan kenapa memilih Independent Sample t-Test serta Mann-Whitney U Test?"
 > **Cara Menjawab:**
-> *"Izin menjelaskan Pak/Bu. Dalam metodologi penelitian ini, jumlah sampel pengujian pada tiap perlakuan adalah **$N = 30$ iterasi**. Berdasarkan literatur statistik, uji Shapiro-Wilk terbukti memiliki kekuatan uji (statistical power) yang jauh lebih tinggi dan sensitif untuk mendeteksi ketidaknormalan pada sampel berukuran kecil hingga menengah ($N < 50$), dibandingkan uji Kolmogorov-Smirnov yang lebih cocok untuk sampel besar di atas 100."*
-
----
-
-### Q2: "Kenapa uji normalitas kamu hitung pada 'selisih berpasangan' ($\Delta = Direct - Reducer$), bukan hanya pada masing-masing kelompok data?"
-> **Cara Menjawab:**
-> *"Karena desain eksperimen skripsi saya adalah **rancangan berpasangan (paired experimental design)**, di mana iterasi ke-$i$ Direct MVI dan Reducer MVI dijalankan pada perangkat fisik yang sama, urutan interaksi yang identik, dan kondisi latar belakang yang sama.*
+> *"Izin menjelaskan Pak/Bu. Sesuai rancangan eksperimen pada Bab 3.2 dan Gambar 3.1, kedua arsitektur (Direct MVI dan Reducer MVI) dibangun sebagai dua codebase dan aplikasi terpisah. Pengambilan data dilakukan secara sekuensial, yaitu menjalankan 30 iterasi pengujian penuh pada aplikasi Direct MVI terlebih dahulu, kemudian dilanjutkan 30 iterasi pada aplikasi Reducer MVI.*
 > 
-> *Secara teori matematis statistik, uji Paired Sample t-Test pada dasarnya adalah One-Sample t-Test terhadap nilai selisihnya ($d_i = X_{\text{Direct}, i} - X_{\text{Reducer}, i}$) dengan hipotesis nol $\mu_d = 0$. Oleh karena itu, **asumsi normalitas yang diwajibkan oleh Paired t-Test adalah normalitas dari nilai selisih berpasangan tersebut**.*
+> *Karena kedua kelompok pengukuran berasal dari proses eksekusi yang terpisah dan tidak berpasangan secara waktu per iterasi, maka desain statistik yang tepat adalah **Uji Dua Sampel Independen (Two Independent Samples)**. Jika kedua kelompok berdistribusi normal dan homogen digunakan **Independent Sample t-Test**, sedangkan jika tidak normal digunakan uji non-parametrik **Mann-Whitney U Test**."*
+
+---
+
+### Q2: "Di Bab 3.6 proposalmu sempat tertulis Paired t-Test dan Wilcoxon, sementara di Bab 3.2 dan Gambar 3.1 tertulis Independen dan Mann-Whitney. Mana yang benar?"
+> **Cara Menjawab:**
+> *"Yang benar dan sesuai dengan pelaksanaan pengambilan data di lapangan adalah yang tertulis pada **Bab 3.2 dan Gambar 3.1**, yaitu kelompok pengukuran **independen** menggunakan **Independent Sample t-Test dan Mann-Whitney U Test**. Pada naskah Bab 3.6 terdapat kekeliruan penulisan istilah, dan akan segera saya selaraskan agar konsisten dengan Bab 3.2 dan Gambar 3.1."*
+
+---
+
+### Q3: "Apa saja syarat sebelum menggunakan Independent Sample t-Test, dan apakah datamu memenuhinya?"
+> **Cara Menjawab:**
+> *"Ada dua uji prasyarat yang saya lakukan pada taraf signifikansi $\alpha = 0,05$:*
+> 1. ***Uji Normalitas (Shapiro-Wilk)***: *Menguji apakah masing-masing kelompok ($N=30$) berdistribusi normal ($p \ge 0,05$).*
+> 2. ***Uji Homogenitas Varians (F-Test & Levene's Test)***: *Menguji apakah kedua kelompok memiliki varians yang sama/homogen ($p \ge 0,05$).*
 > 
-> *Selain itu, dengan menghitung selisih per iterasi, kita meniadakan faktor pengganggu (noise) seperti fluktuasi suhu perangkat atau background process Android yang dialami bersama oleh kedua pengujian. Namun demikian, untuk melengkapi transparansi data, saya juga tetap menyajikan tabel normalitas kelompok mandiri di lampiran."*
+> *Hasilnya:*
+> * *Pada aplikasi **Marketplace**, kedua kelompok terbukti **berdistribusi normal ($p > 0,20$)** dan memiliki **varians yang homogen ($p > 0,26$)** untuk seluruh metrik. Oleh karena itu, seluruh pengujian pada Marketplace sah menggunakan **Independent Sample t-Test dengan asumsi Equal Variance ($df = 58$)**.*
+> * *Sedangkan pada aplikasi **Sosial Media**, meskipun variansnya homogen ($p > 0,15$), uji normalitas Shapiro-Wilk menunjukkan nilai **$p < 0,05$** (tidak normal), sehingga seluruh pengujian pada Sosial Media dialihkan menggunakan **Mann-Whitney U Test**."*
 
 ---
 
-### Q3: "Kenapa pada modul Marketplace kamu menggunakan Paired t-Test, tapi untuk CPU di Sosial Media beralih ke Wilcoxon Signed-Rank Test?"
+### Q4: "Kenapa pada Sosial Media datanya tidak berdistribusi normal, sedangkan pada Marketplace normal?"
 > **Cara Menjawab:**
-> *"Hal tersebut dilakukan untuk mematuhi kaidah metodologi penelitian yang telah saya tetapkan di Bab 3 Subbab 3.6:*
-> * *Pada Marketplace, selisih penggunaan CPU berdistribusi normal dengan nilai **$p = 0,6407 \ge 0,05$**, sehingga asumsi parametrik terpenuhi dan digunakan **Paired Sample t-Test**.*
-> * *Namun pada Sosial Media, selisih penggunaan CPU menghasilkan nilai **$p = 0,0045 < 0,05$**, yang berarti asumsi normalitas dilanggar. Oleh karena itu, analisis dialihkan ke uji non-parametrik **Wilcoxon Signed-Rank Test** agar kesimpulan statistik tetap valid dan tidak bias.*
-> * *Sebagai verifikasi tambahan (robustness check), saya juga tetap menjalankan Paired t-Test pada CPU Sosial Media dan hasilnya konsisten: sama-sama menunjukkan tidak ada perbedaan yang signifikan ($p = 0,436$)."*
+> *"Pada skenario Sosial Media (Medium State Complexity dengan 26 variabel state), interaksi pengujian melibatkan pengguliran feed unggahan, membuka modal komentar, menyukai komentar, dan memfilter unggahan yang memicu alokasi memori dan Garbage Collection (GC) secara periodik. Pada beberapa iterasi saat GC tidak terpicu, CPU berada di kisaran ~4,2%, sedangkan pada iterasi standar berada di kisaran ~5,9%. Hal ini menyebabkan distribusi data agak condong (skewed) sehingga terdeteksi tidak normal oleh Shapiro-Wilk. Itulah sebabnya penggunaan Mann-Whitney U Test yang berbasis median/peringkat menjadi sangat tepat untuk Sosial Media."*
 
 ---
 
-### Q4: "Apa kesimpulan utama dari uji hipotesis H1 (Responsivitas) dan H2 (Penggunaan CPU)?"
+### Q5: "Apa kesimpulan utama dari hasil uji hipotesis H1 (Responsivitas) dan H2 (Penggunaan CPU)?"
 > **Cara Menjawab:**
-> *"Kesimpulan utamanya menunjukkan karakteristik yang berbeda tergantung tingkat kompleksitas state:*
-> 1. *Pada **Marketplace (Low State Complexity / 12 variabel state)**: **Direct State Update MVI unggul signifikan atas Reducer-Based MVI**. Direct MVI lebih responsif ($p < 0,001$) dengan ukuran efek besar ($d = -1,32$), dan lebih hemat pemakaian CPU sebesar 3,19% ($p < 0,001, d = -1,09$).*
-> 2. *Pada **Sosial Media (Medium State Complexity / 26 variabel state)**: Kedua arsitektur memiliki performa yang relatif setara. Penggunaan CPU **tidak berbeda signifikan** ($p = 0,8210$). Sedangkan pada responsivitas kondisi tipikal (P50), Reducer sedikit lebih cepat 0,05 ms ($p = 0,0253$), namun pada beban tinggi (P95) perbedaan tersebut tidak lagi signifikan ($p = 0,1968$)."*
+> *"Hasil pengujian menunjukkan pola yang konsisten:*
+> 1. *Pada **Marketplace (Low State Complexity - 12 variabel state)**:*
+>    * **H1 (Responsivitas) Diterima**: *Direct MVI (9,08 ms) secara signifikan lebih cepat dibandingkan Reducer MVI (9,33 ms) dengan nilai $t(58) = -6,25, p < 0,001$ dan ukuran efek besar (Pooled Cohen's $d = -1,61$).*
+>    * **H2 (Penggunaan CPU) Diterima**: *Direct MVI (8,56%) secara signifikan lebih hemat CPU sebesar 3,19% dibandingkan Reducer MVI (8,83%) dengan nilai $t(58) = -5,74, p < 0,001$ dan ukuran efek besar ($d = -1,48$).*
+> 2. *Pada **Sosial Media (Medium State Complexity - 26 variabel state)**:*
+>    * **H1 (Responsivitas)**: *Pada kondisi tipikal (P50), terdapat perbedaan signifikan ($U = 689, p = 0,0004$) dengan selisih rata-rata sangat tipis 0,05 ms (0,78%), namun pada beban tinggi (P95) tidak terdapat perbedaan signifikan ($U = 524, p = 0,2772$).*
+>    * **H2 (Penggunaan CPU) Ditolak**: *Tidak terdapat perbedaan penggunaan CPU yang signifikan antara Direct MVI (5,51%) dan Reducer MVI (5,65%) berdasarkan uji Mann-Whitney ($U = 426, p = 0,7283$)."*
 
 ---
 
-### Q5: "Pada Marketplace, responsivitasnya beda signifikan, tapi kenapa waktu pemrosesan logikanya ($T_{logic}$) tidak berbeda signifikan? Lalu dari mana selisih waktu itu muncul?"
+### Q6: "Pada Marketplace, kenapa waktu logika ($T_{logic}$) tidak berbeda signifikan ($p = 0,268$), padahal responsivitas totalnya berbeda signifikan ($p < 0,001$)?"
 > **Cara Menjawab:**
-> *(Ini pertanyaan emas yang menunjukkan Anda sangat paham sistem Android Jetpack Compose)*
-> 
-> *"Izin menjelaskan Pak/Bu, ini adalah salah satu temuan dekomposisi paling menarik dalam skripsi saya:*
-> * *Waktu pemrosesan logika di ViewModel ($T_{logic}$) pada Direct MVI adalah $0,137$ ms dan Reducer MVI adalah $0,144$ ms. Selisih ini secara statistik **tidak signifikan ($p = 0,3209$)** karena eksekusi fungsi reducer di memori CPU berlangsung sangat cepat (orde mikrodetik).*
-> * *Namun, selisih responsivitas total menjadi sangat signifikan karena disumbang oleh **waktu perenderan antarmuka ($T_{frame}$, $p < 0,001$)**.*
-> * *Penyebabnya adalah: pada Reducer-Based MVI, pembuatan objek state baru secara terpusat dan pengiriman mutation object memicu siklus **rekomposisi antarmuka Jetpack Compose** yang sedikit lebih sering/lama dibandingkan Direct MVI yang hanya memperbarui atribut state yang ditargetkan secara langsung."*
+> *"Dari hasil dekomposisi waktu responsivitas ($T_{\text{responsivitas}} = T_{\text{logic}} + T_{\text{frame}}$):*
+> * *Durasi eksekusi logika di CPU ViewModel ($T_{\text{logic}}$) antara Direct (0,137 ms) dan Reducer (0,144 ms) hanya berselisih 0,007 ms dan tidak signifikan secara statistik ($p = 0,2683$).*
+> * *Selisih utama justru berasal dari **waktu perenderan frame antarmuka Jetpack Compose ($T_{\text{frame}}$)** yang berbeda sangat signifikan ($t(58) = -6,36, p < 0,001$).*
+> * *Hal ini membuktikan bahwa overhead utama Reducer-Based MVI bukan terletak pada kalkulasi fungsi reducer di ViewModel, melainkan pada instansiasi objek state/mutation perantara yang memengaruhi beban kerja rekomposisi dan rendering frame pada subsistem grafis Jetpack Compose."*
 
 ---
 
-### Q6: "Apa arti dari nilai Cohen's $d$ yang kamu cantumkan di tabel?"
-> **Cara Menjawab:**
-> *"Cohen's $d$ adalah ukuran kekuatan pengaruh (**Effect Size**). Nilai $p$-value hanya memberi tahu kita apakah perbedaan itu nyata atau kebetulan semata, tetapi tidak memberi tahu seberapa besar dampaknya.*
-> 
-> *Pada Marketplace, nilai Cohen's $d$ untuk responsivitas adalah **$-1,32$** dan CPU adalah **$-1,09$**. Menurut kriteria Cohen (1988), nilai $|d| \ge 0,8$ dikategorikan sebagai **Large Effect (efek besar)**. Artinya, perbedaan arsitektur MVI memberikan dampak performa nyata yang cukup substansial pada aplikasi dengan state sederhana."*
-
----
-
-### Q7: "Bagaimana kamu memastikan eksperimen ini terkontrol (*fair*) dan tidak bias antar kedua varian?"
-> **Cara Menjawab:**
-> *"Sesuai dengan rancangan di Bab 3 Subbab 3.2 dan 3.5, seluruh faktor non-perlakuan dikontrol secara ketat:*
-> 1. *Kedua varian dibangun dengan komponen tata letak UI, logika bisnis, dan dataset katalog awal yang identik 100%.*
-> 2. *Pengujian dijalankan pada satu unit smartphone fisik yang sama (Samsung Galaxy A24, RAM 8 GB, Android 15).*
-> 3. *Interaksi pengguna digerakkan secara otomatis menggunakan script UI Automator yang deterministik.*
-> 4. *Macrobenchmark dijalankan dengan mode kompilasi penuh (`CompilationMode.Full`) dan `StartupMode.WARM` agar kondisi eksekusi stabil dan tidak terpengaruh oleh proses kompilasi JIT di tengah pengujian."*
-
----
-
-*Dokumen ini dibuat otomatis untuk proyek analisis skripsi Audy Fitrah Habibie.*  
-*File skrip terkait: [`Analisis.R`](file:///C:/Users/AUDYFH/Skripsi/Analisis.R) & [`Uji_Hipotesis.R`](file:///C:/Users/AUDYFH/Skripsi/Uji_Hipotesis.R).*
+*Dokumen ini diperbarui pada branch `independent-test` untuk proyek analisis skripsi Audy Fitrah Habibie.*

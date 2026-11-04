@@ -1,8 +1,9 @@
 # ==============================================================================
-# ANALISIS DATA DAN UJI NORMALITAS SKRIPSI
+# ANALISIS DATA, UJI NORMALITAS, DAN UJI HOMOGENITAS VARIANS SKRIPSI
 # Judul: ANALISIS KOMPARATIF PERFORMA DIRECT STATE UPDATE MVI DAN 
 #        REDUCER-BASED MVI PADA APLIKASI ANDROID BERBASIS JETPACK COMPOSE
 # Peneliti: Audy Fitrah Habibie (NIM: 235150400111018)
+# Desain: Dua Kelompok Pengukuran Independen (Two Independent Samples, N = 30)
 # ==============================================================================
 
 # 1. Inisialisasi Pustaka
@@ -60,7 +61,7 @@ extract_macrobenchmark_data <- function(file_path, app_name, arch_name) {
     t_frame_mean[i] <- mean(f_vals)
   }
   
-  # Responsivitas = T_logic + T_frame
+  # Responsivitas = T_logic + T_frame (Persamaan 2.1 Proposal)
   responsiveness_p50 <- t_logic_avg + t_frame_p50
   responsiveness_p95 <- t_logic_avg + t_frame_p95
   responsiveness_mean <- t_logic_avg + t_frame_mean
@@ -80,6 +81,19 @@ extract_macrobenchmark_data <- function(file_path, app_name, arch_name) {
     responsiveness_p95 = responsiveness_p95,
     responsiveness_mean = responsiveness_mean,
     stringsAsFactors = FALSE
+  )
+}
+
+# Fungsi Levene's Test (Brown-Forsythe Median-Centered) menggunakan Base R
+levene_test_median <- function(group1, group2) {
+  z1 <- abs(group1 - median(group1))
+  z2 <- abs(group2 - median(group2))
+  vals <- c(z1, z2)
+  grp <- factor(c(rep("G1", length(z1)), rep("G2", length(z2))))
+  fit <- anova(lm(vals ~ grp))
+  list(
+    f_stat = fit$`F value`[1],
+    p_val = fit$`Pr(>F)`[1]
   )
 }
 
@@ -105,6 +119,7 @@ desc_stats <- df_all %>%
     # CPU Usage
     cpu_mean = mean(cpu_usage),
     cpu_sd   = sd(cpu_usage),
+    cpu_var  = var(cpu_usage),
     cpu_median = median(cpu_usage),
     cpu_min  = min(cpu_usage),
     cpu_max  = max(cpu_usage),
@@ -113,6 +128,7 @@ desc_stats <- df_all %>%
     # Responsiveness P50
     resp_p50_mean = mean(responsiveness_p50),
     resp_p50_sd   = sd(responsiveness_p50),
+    resp_p50_var  = var(responsiveness_p50),
     resp_p50_median = median(responsiveness_p50),
     resp_p50_min  = min(responsiveness_p50),
     resp_p50_max  = max(responsiveness_p50),
@@ -120,6 +136,7 @@ desc_stats <- df_all %>%
     # Responsiveness P95
     resp_p95_mean = mean(responsiveness_p95),
     resp_p95_sd   = sd(responsiveness_p95),
+    resp_p95_var  = var(responsiveness_p95),
     resp_p95_median = median(responsiveness_p95),
     resp_p95_min  = min(responsiveness_p95),
     resp_p95_max  = max(responsiveness_p95),
@@ -140,8 +157,8 @@ desc_stats <- df_all %>%
 write.csv(desc_stats, "output/descriptive_statistics.csv", row.names = FALSE)
 cat("    Tersimpan: output/descriptive_statistics.csv\n\n")
 
-# 5. Uji Normalitas Shapiro-Wilk: Kelompok Mandiri (Per App & Arch)
-cat("--> Melakukan Uji Normalitas Shapiro-Wilk (Kelompok Mandiri)...\n")
+# 5. Uji Normalitas Shapiro-Wilk per Kelompok Independen (N = 30 per grup)
+cat("--> Melakukan Uji Normalitas Shapiro-Wilk per Kelompok Independen...\n")
 metrics_to_test <- c(
   "cpu_usage", 
   "responsiveness_p50", 
@@ -172,7 +189,7 @@ for (a in unique(df_all$app)) {
         Metric = metric_labels[[m]],
         Metric_Var = m,
         Sample_Size = length(vals),
-        W_Statistic = round(st$statistic, 4),
+        W_Statistic = round(as.numeric(st$statistic), 4),
         p_value = round(st$p.value, 5),
         Is_Normal = ifelse(st$p.value >= 0.05, "Normal (p >= 0.05)", "Tidak Normal (p < 0.05)"),
         stringsAsFactors = FALSE
@@ -185,10 +202,9 @@ df_normality_groups <- bind_rows(normality_groups_list)
 write.csv(df_normality_groups, "output/shapiro_wilk_groups.csv", row.names = FALSE)
 cat("    Tersimpan: output/shapiro_wilk_groups.csv\n\n")
 
-# 6. Uji Normalitas Shapiro-Wilk: Selisih Berpasangan (Paired Differences)
-# Syarat utama Paired Sample t-Test adalah selisih d = Direct - Reducer berdistribusi normal
-cat("--> Melakukan Uji Normalitas Shapiro-Wilk (Selisih Berpasangan Delta)...\n")
-diff_records <- list()
+# 6. Evaluasi Gabungan Prasyarat Uji Independen (Normalitas Kedua Grup + Homogenitas Varians)
+cat("--> Melakukan Uji Homogenitas Varians (F-Test & Levene's Test) dan Penentuan Alat Uji...\n")
+prereq_records <- list()
 
 test_apps <- list(
   list(app = "Marketplace", direct = df_mp_direct, reducer = df_mp_reducer),
@@ -201,33 +217,60 @@ for (item in test_apps) {
   r_df <- item$reducer
   
   for (m in metrics_to_test) {
-    diff_vals <- d_df[[m]] - r_df[[m]]
-    st <- shapiro.test(diff_vals)
-    diff_records[[length(diff_records) + 1]] <- data.frame(
+    v_direct  <- d_df[[m]]
+    v_reducer <- r_df[[m]]
+    
+    # Normalitas masing-masing kelompok
+    sw_d <- shapiro.test(v_direct)
+    sw_r <- shapiro.test(v_reducer)
+    both_normal <- (sw_d$p.value >= 0.05) && (sw_r$p.value >= 0.05)
+    
+    # Homogenitas Varians: F-Test & Levene's Test (median-based)
+    ft <- var.test(v_direct, v_reducer)
+    lt <- levene_test_median(v_direct, v_reducer)
+    equal_var <- (lt$p_val >= 0.05) && (ft$p.value >= 0.05)
+    
+    # Rekomendasi uji berdasarkan syarat normalitas dan homogenitas varians
+    if (both_normal) {
+      if (equal_var) {
+        rec_test <- "Independent Sample t-Test (Equal Variance)"
+      } else {
+        rec_test <- "Welch's t-Test (Unequal Variance)"
+      }
+    } else {
+      rec_test <- "Mann-Whitney U Test"
+    }
+    
+    prereq_records[[length(prereq_records) + 1]] <- data.frame(
       App = cur_app,
       Metric = metric_labels[[m]],
       Metric_Var = m,
-      Comparison = "Direct MVI - Reducer MVI",
-      Sample_Size = length(diff_vals),
-      Mean_Diff = round(mean(diff_vals), 4),
-      SD_Diff = round(sd(diff_vals), 4),
-      W_Statistic = round(st$statistic, 4),
-      p_value = round(st$p.value, 5),
-      Is_Normal = ifelse(st$p.value >= 0.05, "Normal (p >= 0.05)", "Tidak Normal (p < 0.05)"),
-      Recommended_Test = ifelse(st$p.value >= 0.05, "Paired Sample t-Test", "Wilcoxon Signed-Rank Test"),
+      Direct_W = round(as.numeric(sw_d$statistic), 4),
+      Direct_p = round(sw_d$p.value, 5),
+      Reducer_W = round(as.numeric(sw_r$statistic), 4),
+      Reducer_p = round(sw_r$p.value, 5),
+      Normality_Status = ifelse(both_normal, "Kedua Kelompok Normal", "Tidak Normal (p < 0.05)"),
+      Var_Direct = round(var(v_direct), 5),
+      Var_Reducer = round(var(v_reducer), 5),
+      F_Statistic = round(as.numeric(ft$statistic), 4),
+      F_p_value = round(ft$p.value, 4),
+      Levene_F = round(lt$f_stat, 4),
+      Levene_p_value = round(lt$p_val, 4),
+      Variance_Status = ifelse(equal_var, "Homogen / Sama (p >= 0.05)", "Tidak Homogen (p < 0.05)"),
+      Recommended_Test = rec_test,
       stringsAsFactors = FALSE
     )
   }
 }
 
-df_normality_paired <- bind_rows(diff_records)
-write.csv(df_normality_paired, "output/shapiro_wilk_paired_diffs.csv", row.names = FALSE)
-cat("    Tersimpan: output/shapiro_wilk_paired_diffs.csv\n\n")
+df_prereq <- bind_rows(prereq_records)
+write.csv(df_prereq, "output/prerequisite_tests.csv", row.names = FALSE)
+cat("    Tersimpan: output/prerequisite_tests.csv\n\n")
 
-# 7. Membuat Visualisasi Diagnostik Normalitas (Q-Q Plots)
-cat("--> Menghasilkan Gambar Q-Q Plot dan Distribusi...\n")
+# 7. Membuat Visualisasi Diagnostik Normalitas (Q-Q Plots Kelompok Mandiri)
+cat("--> Menghasilkan Gambar Q-Q Plot Kelompok Independen...\n")
 
-# 7a. Q-Q Plot Responsivitas P50 (Direct vs Reducer untuk Marketplace & Sosial Media)
+# 7a. Q-Q Plot Responsivitas P50
 p_qq_resp <- ggplot(df_all, aes(sample = responsiveness_p50, color = architecture)) +
   stat_qq() +
   stat_qq_line(linetype = "dashed") +
@@ -235,7 +278,7 @@ p_qq_resp <- ggplot(df_all, aes(sample = responsiveness_p50, color = architectur
   theme_bw() +
   labs(
     title = "Normal Q-Q Plot: Responsivitas P50 (ms)",
-    subtitle = "Uji Asumsi Normalitas Kelompok Mandiri (N = 30)",
+    subtitle = "Uji Asumsi Normalitas Kelompok Independen (N = 30 per kelompok)",
     x = "Theoretical Quantiles",
     y = "Sample Quantiles (ms)"
   ) +
@@ -251,7 +294,7 @@ p_qq_cpu <- ggplot(df_all, aes(sample = cpu_usage, color = architecture)) +
   theme_bw() +
   labs(
     title = "Normal Q-Q Plot: Penggunaan CPU (%)",
-    subtitle = "Uji Asumsi Normalitas Kelompok Mandiri (N = 30)",
+    subtitle = "Uji Asumsi Normalitas Kelompok Independen (N = 30 per kelompok)",
     x = "Theoretical Quantiles",
     y = "Sample Quantiles (%)"
   ) +
@@ -259,55 +302,16 @@ p_qq_cpu <- ggplot(df_all, aes(sample = cpu_usage, color = architecture)) +
 
 ggsave("output/figures/qq_plot_cpu_usage.png", p_qq_cpu, width = 7, height = 6, dpi = 300)
 
-# 7c. Q-Q Plot Selisih Berpasangan (Paired Differences)
-diff_plot_df <- bind_rows(
-  data.frame(
-    App = "Marketplace",
-    Metric = "Penggunaan CPU (%)",
-    diff = df_mp_direct$cpu_usage - df_mp_reducer$cpu_usage
-  ),
-  data.frame(
-    App = "Marketplace",
-    Metric = "Responsivitas P50 (ms)",
-    diff = df_mp_direct$responsiveness_p50 - df_mp_reducer$responsiveness_p50
-  ),
-  data.frame(
-    App = "Sosial Media",
-    Metric = "Penggunaan CPU (%)",
-    diff = df_sm_direct$cpu_usage - df_sm_reducer$cpu_usage
-  ),
-  data.frame(
-    App = "Sosial Media",
-    Metric = "Responsivitas P50 (ms)",
-    diff = df_sm_direct$responsiveness_p50 - df_sm_reducer$responsiveness_p50
-  )
-)
-
-p_qq_diff <- ggplot(diff_plot_df, aes(sample = diff, color = App)) +
-  stat_qq() +
-  stat_qq_line(linetype = "dashed") +
-  facet_grid(App ~ Metric, scales = "free") +
-  theme_bw() +
-  labs(
-    title = "Normal Q-Q Plot: Selisih Berpasangan (Direct - Reducer)",
-    subtitle = "Asumsi Penentu Pemilihan Paired t-Test vs Wilcoxon Signed-Rank Test",
-    x = "Theoretical Quantiles",
-    y = "Sample Difference Quantiles"
-  ) +
-  theme(legend.position = "none")
-
-ggsave("output/figures/qq_plot_paired_differences.png", p_qq_diff, width = 8, height = 6, dpi = 300)
-
-cat("    Tersimpan semua plot di direktori: output/figures/\n\n")
+cat("    Tersimpan plot di direktori: output/figures/\n\n")
 
 # 8. Cetak Ringkasan Hasil ke Konsol
-cat("========================================================================================\n")
-cat("                       RINGKASAN HASIL UJI NORMALITAS SHAPIRO-WILK                      \n")
-cat("========================================================================================\n")
-cat("\nA. KELOMPOK MANDIRI (Marginal Distribution):\n")
-print(as.data.frame(df_normality_groups %>% select(App, Architecture, Metric, W_Statistic, p_value, Is_Normal)))
+cat("====================================================================================================\n")
+cat("                    RINGKASAN HASIL UJI NORMALITAS & HOMOGENITAS VARIANS                            \n")
+cat("====================================================================================================\n")
+cat("\nA. UJI NORMALITAS SHAPIRO-WILK PER KELOMPOK (N = 30):\n")
+print(as.data.frame(df_normality_groups %>% select(App, Architecture, Metric, W_Statistic, p_value, Is_Normal)), row.names = FALSE)
 
-cat("\nB. SELISIH BERPASANGAN (Paired Differences Delta = Direct - Reducer):\n")
-print(as.data.frame(df_normality_paired %>% select(App, Metric, Mean_Diff, W_Statistic, p_value, Is_Normal, Recommended_Test)))
-cat("========================================================================================\n")
-cat("Analisis selesai dengan sukses!\n")
+cat("\nB. RINGKASAN PRASYARAT (NORMALITAS + HOMOGENITAS VARIANS) & PENENTUAN ALAT UJI:\n")
+print(as.data.frame(df_prereq %>% select(App, Metric, Normality_Status, F_p_value, Levene_p_value, Variance_Status, Recommended_Test)), row.names = FALSE)
+cat("====================================================================================================\n")
+cat("Analisis prasyarat selesai dengan sukses!\n")
